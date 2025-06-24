@@ -4,16 +4,36 @@ from typing import List, Dict
 import json
 import openai
 from dotenv import load_dotenv
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.language_manager import language_manager
+from config.config import Config
 
 load_dotenv()
 
 class TarotAIInterpreter:
     def __init__(self):
-        self.client = openai.OpenAI(
-            api_key=os.getenv('OPENAI_API_KEY')
-        )
-        self.model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+        self.ai_model = Config.AI_MODEL
+        
+        # 根据配置的模型类型初始化相应的客户端
+        if self.ai_model.startswith('gpt'):
+            self.client = openai.OpenAI(
+                api_key=Config.OPENAI_API_KEY
+            )
+            self.model = Config.OPENAI_MODEL
+            self.max_tokens = Config.OPENAI_MAX_TOKENS
+            self.temperature = Config.OPENAI_TEMPERATURE
+        elif self.ai_model == 'deepseek-chat':
+            self.client = openai.OpenAI(
+                api_key=Config.DEEPSEEK_API_KEY,
+                base_url=Config.DEEPSEEK_BASE_URL
+            )
+            self.model = Config.DEEPSEEK_MODEL
+            self.max_tokens = Config.DEEPSEEK_MAX_TOKENS
+            self.temperature = Config.DEEPSEEK_TEMPERATURE
+        else:
+            raise ValueError(f"不支持的AI模型: {self.ai_model}")
     
     def generate_reading(self, cards: List[Dict], question: str = None, spread_type: str = "general", user_id: int = None) -> str:
         """
@@ -33,10 +53,10 @@ class TarotAIInterpreter:
             user_lang = language_manager.get_user_language(user_id) if user_id else 'zh'
             
             # 构建提示词
-            prompt = self._build_prompt(cards, question, spread_type, user_lang)
+            prompt = self._build_prompt(cards, question, spread_type, user_lang, user_id)
             
             # 获取系统提示词
-            system_prompt = language_manager.get_text('ai_prompts', 'system_prompt', user_id)
+            system_prompt = language_manager.get_ai_prompt('system_prompt', user_id)
             
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -50,36 +70,39 @@ class TarotAIInterpreter:
                         "content": prompt
                     }
                 ],
-                max_tokens=1500,
-                temperature=0.7
+                max_tokens=self.max_tokens,
+                temperature=self.temperature
             )
             
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            error_msg = language_manager.get_text('errors', 'ai_reading_failed', user_id)
-            return f"{error_msg}: {str(e)}"
+            if user_id:
+                error_msg = language_manager.get_text('errors', user_id, ai_reading_failed=True)
+                return f"{error_msg}: {str(e)}"
+            else:
+                return f"AI解读失败: {str(e)}"
     
-    def _build_prompt(self, cards: List[Dict], question: str, spread_type: str, user_lang: str = 'zh') -> str:
+    def _build_prompt(self, cards: List[Dict], question: str, spread_type: str, user_lang: str = 'zh', user_id: int = None) -> str:
         """
         构建AI提示词
         """
         # 获取多语言文本
-        prompt_template = language_manager.get_text('ai_prompts', 'reading_prompt', None, user_lang)
-        question_label = language_manager.get_text('ai_prompts', 'question_label', None, user_lang)
-        spread_label = language_manager.get_text('ai_prompts', 'spread_label', None, user_lang)
-        cards_label = language_manager.get_text('ai_prompts', 'cards_label', None, user_lang)
+        prompt_template = language_manager.get_ai_prompt('reading_prompt', user_id)
+        question_label = language_manager.get_ai_prompt('question_label', user_id)
+        spread_label = language_manager.get_ai_prompt('spread_label', user_id)
+        cards_label = language_manager.get_ai_prompt('cards_label', user_id)
         
         prompt = prompt_template + "\n\n"
         
         if question:
             prompt += f"{question_label}: {question}\n\n"
         
-        prompt += f"{spread_label}: {self._get_spread_description(spread_type, user_lang)}\n\n"
+        prompt += f"{spread_label}: {self._get_spread_description(spread_type, user_id, user_lang)}\n\n"
         prompt += cards_label + ":\n"
         
         for i, card in enumerate(cards, 1):
-            position = self._get_position_meaning(spread_type, i-1, user_lang)
+            position = self._get_position_meaning(spread_type, i-1, user_id, user_lang)
             orientation = card.get('orientation', '正位')
             if user_lang == 'en':
                 orientation = 'Upright' if orientation == '正位' else 'Reversed'
@@ -87,7 +110,7 @@ class TarotAIInterpreter:
                 orientation = 'Прямое' if orientation == '正位' else 'Обратное'
             
             prompt += f"{i}. {card['name']} ({orientation})\n"
-            position_label = language_manager.get_text('ai_prompts', 'position_label', None, user_lang)
+            position_label = language_manager.get_ai_prompt('position_label', user_id)
             prompt += f"   {position_label}: {position}\n"
             
             if card['type'] == 'major':
@@ -100,30 +123,42 @@ class TarotAIInterpreter:
             prompt += "\n"
         
         # 获取解读要求文本
-        reading_requirements = language_manager.get_text('ai_prompts', 'reading_requirements', None, user_lang)
-        closing_instruction = language_manager.get_text('ai_prompts', 'closing_instruction', None, user_lang)
+        reading_requirements = language_manager.get_ai_prompt('reading_requirements', user_id)
+        closing_instruction = language_manager.get_ai_prompt('closing_instruction', user_id)
         
         prompt += reading_requirements + "\n\n"
         prompt += closing_instruction
         
         return prompt
     
-    def _get_spread_description(self, spread_type: str, user_lang: str = 'zh') -> str:
+    def _get_spread_description(self, spread_type: str, user_id: int = None, user_lang: str = 'zh') -> str:
         """
         获取牌阵描述
         """
-        return language_manager.get_text('spreads', spread_type, None, user_lang)
+        if user_id is not None:
+            return language_manager.get_text('spreads', user_id, **{spread_type: user_lang})
+        else:
+            # 默认返回中文描述
+            spread_names = {
+                'single': '单张牌占卜',
+                'three_card': '三张牌占卜',
+                'love': '爱情占卜',
+                'career': '事业占卜',
+                'decision': '决策占卜'
+            }
+            return spread_names.get(spread_type, spread_type)
     
-    def _get_position_meaning(self, spread_type: str, position: int, user_lang: str = 'zh') -> str:
+    def _get_position_meaning(self, spread_type: str, position: int, user_id: int = None, user_lang: str = 'zh') -> str:
         """
         获取牌阵中特定位置的含义
         """
-        # 从语言配置中获取位置含义
-        position_key = f"{spread_type}_positions"
-        positions = language_manager.get_text('spreads', position_key, None, user_lang)
-        
-        if isinstance(positions, list) and position < len(positions):
-            return positions[position]
+        if user_id is not None:
+            # 从语言配置中获取位置含义
+            position_key = f"{spread_type}_positions"
+            positions = language_manager.get_text('spreads', user_id, **{position_key: user_lang})
+            
+            if isinstance(positions, list) and position < len(positions):
+                return positions[position]
         
         # 默认返回位置编号
         if user_lang == 'en':
@@ -142,8 +177,8 @@ class TarotAIInterpreter:
             user_lang = language_manager.get_user_language(user_id) if user_id else 'zh'
             
             # 获取多语言文本
-            daily_prompt = language_manager.get_text('ai_prompts', 'daily_prompt', user_id)
-            daily_system = language_manager.get_text('ai_prompts', 'daily_system', user_id)
+            daily_prompt = language_manager.get_ai_prompt('daily_prompt', user_id)
+            daily_system = language_manager.get_ai_prompt('daily_system', user_id)
             
             # 构建提示词
             card_meaning = card.get('upright_meaning' if card.get('orientation') == '正位' else 'reversed_meaning', card.get('meaning', ''))
@@ -161,15 +196,18 @@ class TarotAIInterpreter:
                         "content": prompt
                     }
                 ],
-                max_tokens=800,
-                temperature=0.7
+                max_tokens=min(800, self.max_tokens),
+                temperature=self.temperature
             )
             
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            error_msg = language_manager.get_text('errors', 'daily_guidance_failed', user_id)
-            return f"{error_msg}: {str(e)}"
+            if user_id:
+                error_msg = language_manager.get_text('errors', user_id, daily_guidance_failed=True)
+                return f"{error_msg}: {str(e)}"
+            else:
+                return f"每日指导生成失败: {str(e)}"
     
     def generate_card_explanation(self, card: Dict, user_id: int = None) -> str:
         """
@@ -180,28 +218,28 @@ class TarotAIInterpreter:
             user_lang = language_manager.get_user_language(user_id) if user_id else 'zh'
             
             # 获取多语言文本
-            explanation_prompt = language_manager.get_text('ai_prompts', 'explanation_prompt', user_id)
-            explanation_system = language_manager.get_text('ai_prompts', 'explanation_system', user_id)
+            explanation_prompt = language_manager.get_ai_prompt('explanation_prompt', user_id)
+            explanation_system = language_manager.get_ai_prompt('explanation_system', user_id)
             
             # 构建基本信息
-            card_type = language_manager.get_text('ai_prompts', 'major_arcana', user_id) if card['type'] == 'major' else language_manager.get_text('ai_prompts', 'minor_arcana', user_id)
+            card_type = language_manager.get_ai_prompt('major_arcana', user_id) if card['type'] == 'major' else language_manager.get_ai_prompt('minor_arcana', user_id)
             
-            basic_info = f"""- {language_manager.get_text('ai_prompts', 'card_name_label', user_id)}: {card['name']}
-- {language_manager.get_text('ai_prompts', 'card_type_label', user_id)}: {card_type}"""
+            basic_info = f"""- {language_manager.get_ai_prompt('card_name_label', user_id)}: {card['name']}
+- {language_manager.get_ai_prompt('card_type_label', user_id)}: {card_type}"""
             
             if card['type'] == 'major':
-                upright_label = language_manager.get_text('ai_prompts', 'upright_meaning_label', user_id)
-                reversed_label = language_manager.get_text('ai_prompts', 'reversed_meaning_label', user_id)
-                description_label = language_manager.get_text('ai_prompts', 'description_label', user_id)
+                upright_label = language_manager.get_ai_prompt('upright_meaning_label', user_id)
+                reversed_label = language_manager.get_ai_prompt('reversed_meaning_label', user_id)
+                description_label = language_manager.get_ai_prompt('description_label', user_id)
                 
                 basic_info += f"""
 - {upright_label}: {card.get('upright_meaning', '')}
 - {reversed_label}: {card.get('reversed_meaning', '')}
 - {description_label}: {card.get('description', '')}"""
             else:
-                suit_label = language_manager.get_text('ai_prompts', 'suit_label', user_id)
-                element_label = language_manager.get_text('ai_prompts', 'element_label', user_id)
-                meaning_label = language_manager.get_text('ai_prompts', 'meaning_label', user_id)
+                suit_label = language_manager.get_ai_prompt('suit_label', user_id)
+                element_label = language_manager.get_ai_prompt('element_label', user_id)
+                meaning_label = language_manager.get_ai_prompt('meaning_label', user_id)
                 
                 basic_info += f"""
 - {suit_label}: {card.get('suit', '')}
@@ -223,12 +261,15 @@ class TarotAIInterpreter:
                         "content": prompt
                     }
                 ],
-                max_tokens=1000,
-                temperature=0.6
+                max_tokens=min(1000, self.max_tokens),
+                temperature=min(0.6, self.temperature)
             )
             
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            error_msg = language_manager.get_text('errors', 'explanation_failed', user_id)
-            return f"{error_msg}: {str(e)}"
+            if user_id:
+                error_msg = language_manager.get_text('errors', user_id, explanation_failed=True)
+                return f"{error_msg}: {str(e)}"
+            else:
+                return f"牌面解释生成失败: {str(e)}"

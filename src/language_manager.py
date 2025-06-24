@@ -7,7 +7,9 @@
 
 import json
 import os
+import sys
 from typing import Dict, Optional
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.languages import languages
 
 class LanguageManager:
@@ -96,6 +98,37 @@ class LanguageManager:
                 stats[user_language] += 1
         
         return stats
+    
+    def auto_detect_language_by_locale(self, user_id: int, language_code: str = None, country_code: str = None) -> str:
+        """根据用户地区自动检测语言"""
+        # 如果用户已经设置了语言，直接返回
+        if user_id in self.user_languages:
+            return self.user_languages[user_id]
+        
+        # 根据语言代码或国家代码自动检测
+        detected_language = 'en'  # 默认英语
+        
+        if language_code:
+            # 根据语言代码检测
+            if language_code.startswith('zh'):
+                detected_language = 'zh'
+            elif language_code.startswith('ru'):
+                detected_language = 'ru'
+            elif language_code.startswith('en'):
+                detected_language = 'en'
+        
+        if country_code:
+            # 根据国家代码检测
+            if country_code.upper() in ['CN', 'TW', 'HK', 'MO']:
+                detected_language = 'zh'
+            elif country_code.upper() == 'RU':
+                detected_language = 'ru'
+            else:
+                detected_language = 'en'
+        
+        # 自动设置用户语言
+        self.set_user_language(user_id, detected_language)
+        return detected_language
 
 # 创建全局实例
 language_manager = LanguageManager()

@@ -55,11 +55,13 @@ pip install -r requirements.txt
 
 ```bash
 # 复制环境变量模板
-cp config/.env.example .env
+cp .env.example .env
 
-# 编辑 .env 文件，填入你的API密钥
+# 编辑 .env 文件，填入你的API密钥和选择AI模型
 # TELEGRAM_BOT_TOKEN=你的Telegram机器人Token
-# OPENAI_API_KEY=你的OpenAI API密钥
+# AI_MODEL=gpt-3.5-turbo  # 可选: gpt-3.5-turbo, gpt-4, deepseek-chat
+# OPENAI_API_KEY=你的OpenAI API密钥 (使用GPT模型时)
+# DEEPSEEK_API_KEY=你的DeepSeek API密钥 (使用DeepSeek模型时)
 ```
 
 ### 3. 运行机器人
@@ -83,9 +85,17 @@ python -m tests.test_bot
 
 - **Python 3.8+**
 - **python-telegram-bot**: Telegram Bot API
-- **OpenAI API**: AI文本生成
+- **OpenAI API / DeepSeek API**: AI文本生成（支持多种模型切换）
 - **python-dotenv**: 环境变量管理
 - **aiohttp**: 异步HTTP客户端
+
+## 🤖 支持的AI模型
+
+- **GPT-3.5 Turbo**: OpenAI的高效模型，适合日常使用
+- **GPT-4**: OpenAI的最强模型，提供更深入的解读
+- **DeepSeek Chat**: 国产优秀模型，性价比高
+
+通过修改 `.env` 文件中的 `AI_MODEL` 参数即可切换模型。
 
 ## 📖 使用方法
 

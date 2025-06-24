@@ -166,6 +166,26 @@ Please enter your question for the reading, or send "skip" for a general reading
         },
         
         # 每日塔罗
+        'daily_title': {
+            'zh': '今日塔罗指导',
+            'en': 'Today\'s Tarot Guidance',
+            'ru': 'Сегодняшнее руководство Таро'
+        },
+        'today_card': {
+            'zh': '今日牌',
+            'en': 'Today\'s Card',
+            'ru': 'Сегодняшняя карта'
+        },
+        'guidance': {
+            'zh': '指导',
+            'en': 'Guidance',
+            'ru': 'Руководство'
+        },
+        'daily_blessing': {
+            'zh': '愿这张牌为你带来今日的智慧与力量',
+            'en': 'May this card bring you today\'s wisdom and strength',
+            'ru': 'Пусть эта карта принесет вам сегодняшнюю мудрость и силу'
+        },
         'daily_card_title': {
             'zh': '🌅 今日塔罗指导',
             'en': '🌅 Today\'s Tarot Guidance',

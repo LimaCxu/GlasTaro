@@ -18,11 +18,21 @@ class Config:
     TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     BOT_USERNAME = os.getenv('BOT_USERNAME', 'TarotBot')
     
+    # AI 模型配置
+    AI_MODEL = os.getenv('AI_MODEL', 'gpt-3.5-turbo')  # 支持: gpt-3.5-turbo, gpt-4, deepseek-chat
+    
     # OpenAI 配置
     OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
     OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
     OPENAI_MAX_TOKENS = int(os.getenv('OPENAI_MAX_TOKENS', '1500'))
     OPENAI_TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', '0.7'))
+    
+    # DeepSeek 配置
+    DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+    DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
+    DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+    DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', '1500'))
+    DEEPSEEK_TEMPERATURE = float(os.getenv('DEEPSEEK_TEMPERATURE', '0.7'))
     
     # 机器人功能配置
     MAX_CARDS_PER_READING = int(os.getenv('MAX_CARDS_PER_READING', '3'))
@@ -155,14 +165,22 @@ class Config:
         if not cls.TELEGRAM_BOT_TOKEN:
             errors.append('TELEGRAM_BOT_TOKEN 未设置')
         
-        if not cls.OPENAI_API_KEY:
-            errors.append('OPENAI_API_KEY 未设置')
+        # 验证AI模型配置
+        if cls.AI_MODEL.startswith('gpt'):
+            if not cls.OPENAI_API_KEY:
+                errors.append('使用GPT模型时，OPENAI_API_KEY 未设置')
+            if cls.OPENAI_TEMPERATURE < 0 or cls.OPENAI_TEMPERATURE > 2:
+                errors.append('OPENAI_TEMPERATURE 应该在 0-2 之间')
+        elif cls.AI_MODEL == 'deepseek-chat':
+            if not cls.DEEPSEEK_API_KEY:
+                errors.append('使用DeepSeek模型时，DEEPSEEK_API_KEY 未设置')
+            if cls.DEEPSEEK_TEMPERATURE < 0 or cls.DEEPSEEK_TEMPERATURE > 2:
+                errors.append('DEEPSEEK_TEMPERATURE 应该在 0-2 之间')
+        else:
+            errors.append(f'不支持的AI模型: {cls.AI_MODEL}')
         
         if cls.MAX_CARDS_PER_READING < 1 or cls.MAX_CARDS_PER_READING > 10:
             errors.append('MAX_CARDS_PER_READING 应该在 1-10 之间')
-        
-        if cls.OPENAI_TEMPERATURE < 0 or cls.OPENAI_TEMPERATURE > 2:
-            errors.append('OPENAI_TEMPERATURE 应该在 0-2 之间')
         
         return errors
     
@@ -186,7 +204,11 @@ config = Config()
 
 # 导出常用配置
 TELEGRAM_BOT_TOKEN = config.TELEGRAM_BOT_TOKEN
+AI_MODEL = config.AI_MODEL
 OPENAI_API_KEY = config.OPENAI_API_KEY
 OPENAI_MODEL = config.OPENAI_MODEL
+DEEPSEEK_API_KEY = config.DEEPSEEK_API_KEY
+DEEPSEEK_BASE_URL = config.DEEPSEEK_BASE_URL
+DEEPSEEK_MODEL = config.DEEPSEEK_MODEL
 MAX_CARDS_PER_READING = config.MAX_CARDS_PER_READING
 DEBUG = config.DEBUG

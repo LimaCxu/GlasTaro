@@ -2,6 +2,9 @@ import random
 from typing import List, Dict, Optional, Tuple
 import os
 import random
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from data.tarot_cards import get_all_cards, get_card_by_id
 from src.ai_interpreter import TarotAIInterpreter
 

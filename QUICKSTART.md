@@ -17,11 +17,13 @@ pip install -r requirements.txt
 ### 2️⃣ 配置环境变量
 ```bash
 # 复制配置模板
-cp config/.env.example .env
+cp .env.example .env
 
 # 编辑 .env 文件，填入以下信息：
 # TELEGRAM_BOT_TOKEN=你的机器人Token
-# OPENAI_API_KEY=你的OpenAI密钥
+# AI_MODEL=gpt-3.5-turbo  # 选择AI模型: gpt-3.5-turbo, gpt-4, deepseek-chat
+# OPENAI_API_KEY=你的OpenAI密钥 (使用GPT模型时)
+# DEEPSEEK_API_KEY=你的DeepSeek密钥 (使用DeepSeek模型时)
 ```
 
 ### 3️⃣ 启动机器人

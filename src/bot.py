@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from typing import Dict, List
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -8,7 +9,9 @@ from telegram.ext import (
 )
 from dotenv import load_dotenv
 from src.tarot_reader import TarotReader
+from src.ai_interpreter import TarotAIInterpreter
 from src.language_manager import language_manager
+from src.user_manager import user_manager
 from data.tarot_cards import MAJOR_ARCANA, MINOR_ARCANA
 
 # 加载环境变量
@@ -25,20 +28,93 @@ class TarotBot:
     def __init__(self):
         self.tarot_reader = TarotReader()
         self.user_sessions = {}  # 存储用户会话数据
+    
+    def clean_markdown_text(self, text: str) -> str:
+        """清理文本中可能导致Markdown解析错误的字符"""
+        if not text:
+            return text
+        
+        # 移除可能导致实体解析错误的特殊字符组合
+        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)  # 移除控制字符
+        
+        # 转义所有可能导致问题的Markdown特殊字符
+        # 使用更保守的方法，转义所有特殊字符
+        special_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f'\\{char}')
+        
+        # 移除可能导致解析问题的连续特殊字符
+        text = re.sub(r'\\{2,}', '\\', text)  # 移除多余的反斜杠
+        
+        return text
+    
+    async def safe_edit_message(self, update: Update, text: str, reply_markup=None, parse_mode=None):
+        """安全地编辑消息，如果失败则发送新消息"""
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    text, reply_markup=reply_markup, parse_mode=parse_mode
+                )
+            except Exception as e:
+                # 如果是解析错误，尝试不使用parse_mode
+                if "parse entities" in str(e).lower() or "can't parse" in str(e).lower():
+                    try:
+                        await update.callback_query.edit_message_text(
+                            text, reply_markup=reply_markup, parse_mode=None
+                        )
+                        return
+                    except Exception:
+                        pass
+                
+                # 如果编辑失败，发送新消息
+                try:
+                    await update.callback_query.message.reply_text(
+                        text, reply_markup=reply_markup, parse_mode=parse_mode
+                    )
+                except Exception:
+                    # 最后的回退：发送纯文本消息
+                    await update.callback_query.message.reply_text(
+                        text, reply_markup=reply_markup, parse_mode=None
+                    )
+        else:
+            try:
+                await update.message.reply_text(
+                    text, reply_markup=reply_markup, parse_mode=parse_mode
+                )
+            except Exception as e:
+                # 如果是解析错误，尝试不使用parse_mode
+                if "parse entities" in str(e).lower() or "can't parse" in str(e).lower():
+                    await update.message.reply_text(
+                        text, reply_markup=reply_markup, parse_mode=None
+                    )
+                else:
+                    raise e
+    
+    async def safe_delete_message(self, message):
+        """安全地删除消息，忽略删除失败的错误"""
+        try:
+            await message.delete()
+        except Exception:
+            # 忽略删除消息失败的错误
+            pass
         
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /start 命令"""
         user = update.effective_user
         user_id = user.id
         
-        welcome_text = language_manager.get_text(user_id, 'welcome', name=user.first_name)
+        # 自动检测用户语言
+        language_code = user.language_code if hasattr(user, 'language_code') else None
+        language_manager.auto_detect_language_by_locale(user_id, language_code=language_code)
+        
+        welcome_text = language_manager.get_text('welcome', user_id, name=user.first_name)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_reading'), callback_data="start_reading")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_daily'), callback_data="daily_card")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_learn'), callback_data="learn_tarot")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_language'), callback_data="language_select")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_help'), callback_data="help")]
+            [InlineKeyboardButton(language_manager.get_text('menu_reading', user_id), callback_data="start_reading")],
+            [InlineKeyboardButton(language_manager.get_text('menu_daily', user_id), callback_data="daily_card")],
+            [InlineKeyboardButton(language_manager.get_text('menu_learn', user_id), callback_data="learn_tarot")],
+            [InlineKeyboardButton(language_manager.get_text('menu_language', user_id), callback_data="language_select")],
+            [InlineKeyboardButton(language_manager.get_text('menu_help', user_id), callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -47,7 +123,7 @@ class TarotBot:
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /help 命令"""
         user_id = update.effective_user.id
-        help_text = language_manager.get_text(user_id, 'help_text')
+        help_text = language_manager.get_text('help_text', user_id)
         await update.message.reply_text(help_text)
     
     async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,10 +142,16 @@ class TarotBot:
         """处理 /learn 命令"""
         await self.show_learning_options(update, context)
     
-    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理按钮回调"""
         query = update.callback_query
-        await query.answer()
+        try:
+            await query.answer()
+        except Exception as e:
+            # 忽略超时的回调查询
+            if "Query is too old" in str(e) or "query id is invalid" in str(e):
+                return
+            raise e
         
         data = query.data
         user_id = update.effective_user.id
@@ -109,92 +191,83 @@ class TarotBot:
     async def show_language_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示语言选择选项"""
         user_id = update.effective_user.id
-        text = language_manager.get_text(user_id, 'language_select')
+        text = language_manager.get_text('language_select', user_id)
         
         keyboard = []
         for lang_code, lang_name in language_manager.get_supported_languages().items():
             keyboard.append([InlineKeyboardButton(lang_name, callback_data=f"lang_{lang_code}")])
         
-        keyboard.append([InlineKeyboardButton(language_manager.get_text(user_id, 'back_main'), callback_data="back_to_main")])
+        keyboard.append([InlineKeyboardButton(language_manager.get_text('back_main', user_id), callback_data="back_to_main")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+        await self.safe_edit_message(update, text, reply_markup=reply_markup)
     
     async def set_user_language(self, update: Update, context: ContextTypes.DEFAULT_TYPE, language: str):
         """设置用户语言"""
         user_id = update.effective_user.id
         
         if language_manager.set_user_language(user_id, language):
-            success_text = language_manager.get_text(user_id, 'language_changed')
-            await update.callback_query.edit_message_text(success_text)
+            success_text = language_manager.get_text('language_changed', user_id)
+            await self.safe_edit_message(update, success_text)
             
             # 延迟显示主菜单
             import asyncio
             await asyncio.sleep(1)
             await self.show_main_menu(update, context)
         else:
-            error_text = language_manager.get_text(user_id, 'error_general')
-            await update.callback_query.edit_message_text(error_text)
+            error_text = language_manager.get_text('error_general', user_id)
+            await self.safe_edit_message(update, error_text)
     
     async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示主菜单"""
         user = update.effective_user
         user_id = user.id
         
-        welcome_text = language_manager.get_text(user_id, 'welcome', name=user.first_name)
+        welcome_text = language_manager.get_text('welcome', user_id, name=user.first_name)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_reading'), callback_data="start_reading")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_daily'), callback_data="daily_card")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_learn'), callback_data="learn_tarot")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_language'), callback_data="language_select")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_help'), callback_data="help")]
+            [InlineKeyboardButton(language_manager.get_text('menu_reading', user_id), callback_data="start_reading")],
+            [InlineKeyboardButton(language_manager.get_text('menu_daily', user_id), callback_data="daily_card")],
+            [InlineKeyboardButton(language_manager.get_text('menu_learn', user_id), callback_data="learn_tarot")],
+            [InlineKeyboardButton(language_manager.get_text('menu_language', user_id), callback_data="language_select")],
+            [InlineKeyboardButton(language_manager.get_text('menu_help', user_id), callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+        await self.safe_edit_message(update, welcome_text, reply_markup=reply_markup)
     
     async def show_spread_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示牌阵选项"""
         user_id = update.effective_user.id
-        text = language_manager.get_text(user_id, 'spread_select')
+        text = language_manager.get_text('spread_select', user_id)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'spread_single'), callback_data="spread_single")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'spread_three'), callback_data="spread_three_card")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'spread_love'), callback_data="spread_love")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'spread_career'), callback_data="spread_career")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'spread_decision'), callback_data="spread_decision")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'back_main'), callback_data="back_to_main")]
+            [InlineKeyboardButton(language_manager.get_text('spread_single', user_id), callback_data="spread_single")],
+            [InlineKeyboardButton(language_manager.get_text('spread_three', user_id), callback_data="spread_three_card")],
+            [InlineKeyboardButton(language_manager.get_text('spread_love', user_id), callback_data="spread_love")],
+            [InlineKeyboardButton(language_manager.get_text('spread_career', user_id), callback_data="spread_career")],
+            [InlineKeyboardButton(language_manager.get_text('spread_decision', user_id), callback_data="spread_decision")],
+            [InlineKeyboardButton(language_manager.get_text('back_main', user_id), callback_data="back_to_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+        await self.safe_edit_message(update, text, reply_markup=reply_markup)
     
     async def ask_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE, spread_type: str):
         """询问用户问题"""
         user_id = update.effective_user.id
         self.user_sessions[user_id] = {'spread_type': spread_type, 'waiting_for_question': True}
         
-        spread_name = language_manager.get_spread_name(user_id, spread_type)
-        text = language_manager.get_text(user_id, 'ask_question', spread_name=spread_name)
+        spread_name = language_manager.get_spread_name(spread_type, user_id)
+        text = language_manager.get_text('ask_question', user_id, spread_name=spread_name)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'skip_question'), callback_data=f"skip_question_{spread_type}")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'back_spreads'), callback_data="back_to_spreads")]
+            [InlineKeyboardButton(language_manager.get_text('skip_question', user_id), callback_data=f"skip_question_{spread_type}")],
+            [InlineKeyboardButton(language_manager.get_text('back_spreads', user_id), callback_data="back_to_spreads")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+        await self.safe_edit_message(update, text, reply_markup=reply_markup)
     
     async def handle_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理用户输入的问题"""
@@ -216,7 +289,7 @@ class TarotBot:
         user_id = update.effective_user.id
         
         # 发送"正在占卜"消息
-        loading_text = language_manager.get_text(user_id, 'reading_loading')
+        loading_text = language_manager.get_text('reading_loading', user_id)
         
         if update.callback_query:
             loading_msg = await update.callback_query.message.reply_text(loading_text)
@@ -237,11 +310,11 @@ class TarotBot:
             result_text = self.format_reading_result(cards, reading, question, spread_type, user_id)
             
             # 删除加载消息并发送结果
-            await loading_msg.delete()
+            await self.safe_delete_message(loading_msg)
             
             keyboard = [
-                [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_reading'), callback_data="start_reading")],
-                [InlineKeyboardButton(language_manager.get_text(user_id, 'back_main'), callback_data="back_to_main")]
+                [InlineKeyboardButton(language_manager.get_text('menu_reading', user_id), callback_data="start_reading")],
+                [InlineKeyboardButton(language_manager.get_text('back_main', user_id), callback_data="back_to_main")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -251,8 +324,9 @@ class TarotBot:
                 await update.message.reply_text(result_text, reply_markup=reply_markup, parse_mode='Markdown')
             
         except Exception as e:
-            await loading_msg.delete()
-            error_text = language_manager.get_text(user_id, 'error_general')
+            logger.error(f"占卜过程中发生错误: {str(e)}", exc_info=True)
+            await self.safe_delete_message(loading_msg)
+            error_text = language_manager.get_text('error_general', user_id)
             if update.callback_query:
                 await update.callback_query.message.reply_text(f"{error_text}: {str(e)}")
             else:
@@ -260,7 +334,7 @@ class TarotBot:
     
     def format_reading_result(self, cards: List[Dict], reading: str, question: str, spread_type: str, user_id: int) -> str:
         """格式化占卜结果"""
-        spread_name = language_manager.get_spread_name(user_id, spread_type)
+        spread_name = language_manager.get_spread_name(spread_type, user_id)
         user_language = language_manager.get_user_language(user_id)
         
         # 多语言文本
@@ -304,7 +378,9 @@ class TarotBot:
             orientation_emoji = "⬆️" if card['orientation'] in ['正位', 'upright', 'прямое'] else "⬇️"
             result += f"{i}. {orientation_emoji} {card['name']} ({card['orientation']})\n"
         
-        result += f"\n{reading_label.get(user_language, reading_label['zh'])}{reading}\n\n"
+        # 清理AI生成的reading文本中可能有问题的Markdown字符
+        cleaned_reading = self.clean_markdown_text(reading)
+        result += f"\n{reading_label.get(user_language, reading_label['zh'])}{cleaned_reading}\n\n"
         result += blessing.get(user_language, blessing['zh'])
         
         return result
@@ -320,12 +396,15 @@ class TarotBot:
             orientation_emoji = "⬆️" if card['orientation'] == '正位' else "⬇️"
             
             # 获取多语言文本
-            daily_title = language_manager.get_text(user_id, 'daily_title')
-            today_card_label = language_manager.get_text(user_id, 'today_card')
-            guidance_label = language_manager.get_text(user_id, 'guidance')
-            blessing = language_manager.get_text(user_id, 'daily_blessing')
-            start_reading_text = language_manager.get_text(user_id, 'menu_reading')
-            back_main_text = language_manager.get_text(user_id, 'back_main')
+            daily_title = language_manager.get_text('daily_title', user_id)
+            today_card_label = language_manager.get_text('today_card', user_id)
+            guidance_label = language_manager.get_text('guidance', user_id)
+            blessing = language_manager.get_text('daily_blessing', user_id)
+            start_reading_text = language_manager.get_text('menu_reading', user_id)
+            back_main_text = language_manager.get_text('back_main', user_id)
+            
+            # 清理AI生成的reading文本
+            cleaned_reading = self.clean_markdown_text(reading)
             
             text = f"""
 🌅 *{daily_title}*
@@ -334,7 +413,7 @@ class TarotBot:
 {orientation_emoji} {card['name']} ({card['orientation']})
 
 📖 *{guidance_label}：*
-{reading}
+{cleaned_reading}
 
 ✨ _{blessing}_
             """
@@ -345,50 +424,42 @@ class TarotBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            if update.callback_query:
-                await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-            else:
-                await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            await self.safe_edit_message(update, text, reply_markup=reply_markup, parse_mode='Markdown')
                 
         except Exception as e:
+            logger.error(f"每日占卜过程中发生错误: {str(e)}", exc_info=True)
             user_id = update.effective_user.id
-            error_text = language_manager.get_text(user_id, 'error_general')
-            if update.callback_query:
-                await update.callback_query.edit_message_text(f"{error_text}: {str(e)}")
-            else:
-                await update.message.reply_text(f"{error_text}: {str(e)}")
+            error_text = language_manager.get_text('error_general', user_id)
+            await self.safe_edit_message(update, f"{error_text}: {str(e)}")
     
     async def show_learning_options(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示学习选项"""
         user_id = update.effective_user.id
         
-        text = language_manager.get_text(user_id, 'learning_center')
+        text = language_manager.get_text('learning_center', user_id)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'learn_major'), callback_data="learn_major")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'learn_minor'), callback_data="learn_minor")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'learn_basics'), callback_data="learn_basics")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'back_main'), callback_data="back_to_main")]
+            [InlineKeyboardButton(language_manager.get_text('learn_major', user_id), callback_data="learn_major")],
+            [InlineKeyboardButton(language_manager.get_text('learn_minor', user_id), callback_data="learn_minor")],
+            [InlineKeyboardButton(language_manager.get_text('learn_basics', user_id), callback_data="learn_basics")],
+            [InlineKeyboardButton(language_manager.get_text('back_main', user_id), callback_data="back_to_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text, reply_markup=reply_markup)
+        await self.safe_edit_message(update, text, reply_markup=reply_markup)
     
     async def show_card_category(self, update: Update, context: ContextTypes.DEFAULT_TYPE, category: str):
         """显示塔罗牌分类"""
         user_id = update.effective_user.id
         
         if category == "major":
-            title = language_manager.get_text(user_id, 'learn_major')
-            description = language_manager.get_text(user_id, 'major_description')
+            title = language_manager.get_text('learn_major', user_id)
+            description = language_manager.get_text('major_description', user_id)
             text = f"🌟 *{title}*\n\n{description}"
             cards = [(f"major_{i}", info['name']) for i, info in MAJOR_ARCANA.items()]
         elif category == "minor":
-            title = language_manager.get_text(user_id, 'learn_minor')
-            description = language_manager.get_text(user_id, 'minor_description')
+            title = language_manager.get_text('learn_minor', user_id)
+            description = language_manager.get_text('minor_description', user_id)
             text = f"🎴 *{title}*\n\n{description}"
             cards = []
             for suit, suit_info in MINOR_ARCANA.items():
@@ -410,14 +481,14 @@ class TarotBot:
             keyboard.append([InlineKeyboardButton(card_name, callback_data=f"card_{card_id}")])
         
         if total_pages > 1:
-            next_page_text = language_manager.get_text(user_id, 'next_page')
+            next_page_text = language_manager.get_text('next_page', user_id)
             keyboard.append([InlineKeyboardButton(f"➡️ {next_page_text}", callback_data=f"page_{category}_1")])
         
-        back_to_learning_text = language_manager.get_text(user_id, 'back_learning')
+        back_to_learning_text = language_manager.get_text('back_learning', user_id)
         keyboard.append([InlineKeyboardButton(f"🔙 {back_to_learning_text}", callback_data="back_to_learning")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        await self.safe_edit_message(update, text, reply_markup=reply_markup, parse_mode='Markdown')
     
     async def show_card_explanation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, card_id: str):
         """显示塔罗牌详细解释"""
@@ -427,14 +498,16 @@ class TarotBot:
             card, explanation = self.tarot_reader.get_card_explanation(card_id)
             
             if not card:
-                error_text = language_manager.get_text(user_id, 'card_not_found')
-                await update.callback_query.edit_message_text(error_text)
+                error_text = language_manager.get_text('card_not_found', user_id)
+                await self.safe_edit_message(update, error_text)
                 return
             
-            text = f"🎴 *{card['name']}*\n\n{explanation}"
+            # 清理AI生成的explanation文本
+            cleaned_explanation = self.clean_markdown_text(explanation)
+            text = f"🎴 *{card['name']}*\n\n{cleaned_explanation}"
             
-            back_to_list_text = language_manager.get_text(user_id, 'back_list')
-            back_main_text = language_manager.get_text(user_id, 'back_main')
+            back_to_list_text = language_manager.get_text('back_list', user_id)
+            back_main_text = language_manager.get_text('back_main', user_id)
             
             keyboard = [
                 [InlineKeyboardButton(f"🔙 {back_to_list_text}", callback_data=f"learn_{'major' if card['type'] == 'major' else 'minor'}")],
@@ -442,20 +515,21 @@ class TarotBot:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            await self.safe_edit_message(update, text, reply_markup=reply_markup, parse_mode='Markdown')
             
         except Exception as e:
-            error_text = language_manager.get_text(user_id, 'error_general')
-            await update.callback_query.edit_message_text(f"{error_text}: {str(e)}")
+            logger.error(f"牌面解释过程中发生错误: {str(e)}", exc_info=True)
+            error_text = language_manager.get_text('error_general', user_id)
+            await self.safe_edit_message(update, f"{error_text}: {str(e)}")
     
     async def show_tarot_basics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示塔罗基础知识"""
         user_id = update.effective_user.id
         
-        text = language_manager.get_text(user_id, 'tarot_basics')
+        text = language_manager.get_text('tarot_basics', user_id)
         
-        back_to_learning_text = language_manager.get_text(user_id, 'back_learning')
-        back_main_text = language_manager.get_text(user_id, 'back_main')
+        back_to_learning_text = language_manager.get_text('back_learning', user_id)
+        back_main_text = language_manager.get_text('back_main', user_id)
         
         keyboard = [
             [InlineKeyboardButton(f"🔙 {back_to_learning_text}", callback_data="back_to_learning")],
@@ -463,37 +537,37 @@ class TarotBot:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.callback_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        await self.safe_edit_message(update, text, reply_markup=reply_markup, parse_mode='Markdown')
     
     async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示主菜单"""
         user = update.effective_user
         user_id = user.id
         
-        welcome_text = language_manager.get_text(user_id, 'welcome', name=user.first_name)
+        welcome_text = language_manager.get_text('welcome', user_id, name=user.first_name)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_reading'), callback_data="start_reading")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_daily'), callback_data="daily_card")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_learn'), callback_data="learn_tarot")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_language'), callback_data="language_select")],
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'menu_help'), callback_data="help")]
+            [InlineKeyboardButton(language_manager.get_text('menu_reading', user_id), callback_data="start_reading")],
+            [InlineKeyboardButton(language_manager.get_text('menu_daily', user_id), callback_data="daily_card")],
+            [InlineKeyboardButton(language_manager.get_text('menu_learn', user_id), callback_data="learn_tarot")],
+            [InlineKeyboardButton(language_manager.get_text('menu_language', user_id), callback_data="language_select")],
+            [InlineKeyboardButton(language_manager.get_text('menu_help', user_id), callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.callback_query.edit_message_text(welcome_text, reply_markup=reply_markup)
+        await self.safe_edit_message(update, welcome_text, reply_markup=reply_markup)
     
     async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示帮助信息"""
         user_id = update.effective_user.id
-        help_text = language_manager.get_text(user_id, 'help_text')
+        help_text = language_manager.get_text('help_text', user_id)
         
         keyboard = [
-            [InlineKeyboardButton(language_manager.get_text(user_id, 'back_main'), callback_data="back_to_main")]
+            [InlineKeyboardButton(language_manager.get_text('back_main', user_id), callback_data="back_to_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.callback_query.edit_message_text(help_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await self.safe_edit_message(update, help_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 def main():
     """启动机器人"""
@@ -516,7 +590,7 @@ def main():
     application.add_handler(CommandHandler("reading", bot.reading_command))
     application.add_handler(CommandHandler("learn", bot.learn_command))
     
-    application.add_handler(CallbackQueryHandler(bot.button_callback))
+    application.add_handler(CallbackQueryHandler(bot.handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_question))
     
     # 启动机器人

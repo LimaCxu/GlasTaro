@@ -7,9 +7,12 @@
 
 import time
 import json
-from typing import Dict, Optional, Any
+import os
+import sys
+from typing import Dict, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from collections import defaultdict
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.config import config
 
 class UserSession:
@@ -82,7 +85,7 @@ class RateLimiter:
             if timestamp > hour_ago
         ]
     
-    def can_make_request(self, user_id: int) -> tuple[bool, str]:
+    def can_make_request(self, user_id: int) -> Tuple[bool, str]:
         """检查用户是否可以发起请求"""
         self._reset_daily_if_needed()
         self._clean_old_requests(user_id)
@@ -144,7 +147,7 @@ class UserManager:
         for user_id in expired_users:
             del self.sessions[user_id]
     
-    def can_user_make_request(self, user_id: int) -> tuple[bool, str]:
+    def can_user_make_request(self, user_id: int) -> Tuple[bool, str]:
         """检查用户是否可以发起请求"""
         return self.rate_limiter.can_make_request(user_id)
     
