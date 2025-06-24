@@ -56,17 +56,17 @@ class LanguageManager:
         """获取用户语言，如果未设置则返回默认语言"""
         return self.user_languages.get(user_id, languages.DEFAULT_LANGUAGE)
     
-    def get_text(self, user_id: int, key: str, **kwargs) -> str:
+    def get_text(self, key: str, user_id: int, **kwargs) -> str:
         """获取用户语言对应的文本"""
         user_language = self.get_user_language(user_id)
         return languages.get_text(key, user_language, **kwargs)
     
-    def get_spread_name(self, user_id: int, spread_type: str) -> str:
+    def get_spread_name(self, spread_type: str, user_id: int) -> str:
         """获取用户语言对应的牌阵名称"""
         user_language = self.get_user_language(user_id)
         return languages.get_spread_name(spread_type, user_language)
     
-    def get_ai_prompt(self, user_id: int, prompt_type: str) -> str:
+    def get_ai_prompt(self, prompt_type: str, user_id: int) -> str:
         """获取用户语言对应的AI提示词"""
         user_language = self.get_user_language(user_id)
         return languages.get_ai_prompt(prompt_type, user_language)

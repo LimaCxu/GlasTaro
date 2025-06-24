@@ -20,7 +20,7 @@ def test_language_manager():
     print(f"支持的语言: {supported_langs}")
     
     # 测试设置用户语言
-    test_user_id = "test_user_123"
+    test_user_id = 123456789
     
     # 测试中文
     language_manager.set_user_language(test_user_id, 'zh')
@@ -51,26 +51,30 @@ def test_spread_names():
     """测试牌阵名称"""
     print("\n=== 测试牌阵名称 ===")
     
+    test_user_id = 123456789
     spreads = ['single', 'three_card', 'love', 'career', 'decision']
     languages_list = ['zh', 'en', 'ru']
     
     for spread in spreads:
         print(f"\n牌阵类型: {spread}")
         for lang in languages_list:
-            name = language_manager.get_spread_name(spread, lang)
+            language_manager.set_user_language(test_user_id, lang)
+            name = language_manager.get_spread_name(spread, test_user_id)
             print(f"  {lang}: {name}")
 
 def test_ai_prompts():
     """测试AI提示词"""
     print("\n=== 测试AI提示词 ===")
     
+    test_user_id = 123456789
     prompts = ['system_prompt', 'reading_prompt', 'daily_prompt']
     languages_list = ['zh', 'en', 'ru']
     
     for prompt in prompts:
         print(f"\n提示词类型: {prompt}")
         for lang in languages_list:
-            text = language_manager.get_ai_prompt(prompt, lang)
+            language_manager.set_user_language(test_user_id, lang)
+            text = language_manager.get_ai_prompt(prompt, test_user_id)
             print(f"  {lang}: {text[:100]}..." if len(text) > 100 else f"  {lang}: {text}")
 
 def test_position_meanings():
@@ -90,13 +94,15 @@ def test_menu_texts():
     """测试菜单文本"""
     print("\n=== 测试菜单文本 ===")
     
-    menu_keys = ['main_menu_reading', 'main_menu_daily', 'main_menu_learning', 'main_menu_help']
+    test_user_id = 123456789
+    menu_keys = ['menu_reading', 'menu_daily', 'menu_learn', 'menu_help']
     languages_list = ['zh', 'en', 'ru']
     
     for key in menu_keys:
         print(f"\n菜单项: {key}")
         for lang in languages_list:
-            text = languages.get_text(key, lang)
+            language_manager.set_user_language(test_user_id, lang)
+            text = language_manager.get_text(key, test_user_id)
             print(f"  {lang}: {text}")
 
 if __name__ == "__main__":
