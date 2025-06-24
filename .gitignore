@@ -106,7 +106,6 @@ Thumbs.db
 user_data/
 sessions/
 cache/
-data/
 
 # API 密钥和敏感信息
 api_keys.txt
