@@ -1,0 +1,8 @@
+python-telegram-bot==20.7
+openai==1.3.7
+requests==2.31.0
+aiohttp==3.9.1
+pillow==10.1.0
+numpy
+random2==1.0.1
+python-dotenv
