@@ -21,6 +21,14 @@ class RedisConfig:
         self.REDIS_SOCKET_KEEPALIVE = os.getenv("REDIS_SOCKET_KEEPALIVE", "true").lower() == "true"
         self.REDIS_SOCKET_KEEPALIVE_OPTIONS = {}
         
+        # 如果 URL 中没有密码但环境变量中有密码，则构建带密码的 URL
+        if self.REDIS_PASSWORD and "@" not in self.REDIS_URL:
+            # 解析 URL 并添加密码
+            if self.REDIS_URL.startswith("redis://"):
+                self.REDIS_URL = f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_URL[8:]}"
+            elif self.REDIS_URL.startswith("rediss://"):
+                self.REDIS_URL = f"rediss://:{self.REDIS_PASSWORD}@{self.REDIS_URL[9:]}"
+        
         # 缓存过期时间配置（秒）
         self.SESSION_EXPIRE = int(os.getenv("SESSION_EXPIRE", "1800"))  # 30分钟
         self.RATE_LIMIT_EXPIRE = int(os.getenv("RATE_LIMIT_EXPIRE", "3600"))  # 1小时
@@ -37,19 +45,28 @@ class RedisManager:
     async def connect(self):
         """连接到 Redis"""
         try:
+            # 如果 URL 中已经包含密码，则不再单独传递 password 参数
+            connection_params = {
+                "db": self.config.REDIS_DB,
+                "max_connections": self.config.REDIS_MAX_CONNECTIONS,
+                "retry_on_timeout": self.config.REDIS_RETRY_ON_TIMEOUT,
+                "socket_keepalive": self.config.REDIS_SOCKET_KEEPALIVE,
+                "socket_keepalive_options": self.config.REDIS_SOCKET_KEEPALIVE_OPTIONS,
+                "decode_responses": True
+            }
+            
+            # 只有当 URL 中没有密码时才单独传递密码参数
+            if "@" not in self.config.REDIS_URL and self.config.REDIS_PASSWORD:
+                connection_params["password"] = self.config.REDIS_PASSWORD
+            
             self.redis = aioredis.from_url(
                 self.config.REDIS_URL,
-                db=self.config.REDIS_DB,
-                password=self.config.REDIS_PASSWORD,
-                max_connections=self.config.REDIS_MAX_CONNECTIONS,
-                retry_on_timeout=self.config.REDIS_RETRY_ON_TIMEOUT,
-                socket_keepalive=self.config.REDIS_SOCKET_KEEPALIVE,
-                socket_keepalive_options=self.config.REDIS_SOCKET_KEEPALIVE_OPTIONS,
-                decode_responses=True
+                **connection_params
             )
+            
             # 测试连接
             await self.redis.ping()
-            logger.info("Redis 连接成功")
+            logger.info(f"Redis 连接成功 - URL: {self.config.REDIS_URL.split('@')[-1] if '@' in self.config.REDIS_URL else self.config.REDIS_URL}")
         except Exception as e:
             logger.error(f"Redis 连接失败: {e}")
             raise

@@ -17,10 +17,9 @@ class DatabaseConfig:
     def __init__(self):
         self.DATABASE_URL = os.getenv(
             "DATABASE_URL", 
-            "postgresql+asyncpg://tarot_user:tarot_pass@localhost:5432/tarot_bot"
+            "postgresql+asyncpg://root:pgsql15u4p2kw3@172.16.30.26:5432/tarot_bot"
         )
-        self.REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
-        
+        self.REDIS_URL = os.getenv("REDIS_URL", "redis://172.16.30.26:1637/10")
         # 数据库连接池配置
         self.POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "10"))
         self.MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
