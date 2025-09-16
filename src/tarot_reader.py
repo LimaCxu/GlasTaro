@@ -1,10 +1,21 @@
+"""
+塔罗牌读取器
+处理塔罗牌的抽取和解读逻辑
+
+作者: Lima
+"""
+
 import random
-from typing import List, Dict, Optional, Tuple
 import os
-import random
 import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from typing import List, Dict, Optional, Tuple
+from pathlib import Path
+
+# 确保能正确导入项目模块
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from data.tarot_cards import get_all_cards, get_card_by_id
 from src.ai_interpreter import TarotAIInterpreter
 

@@ -1,39 +1,77 @@
-import openai
-import os
-from typing import List, Dict
-import json
-import openai
-from dotenv import load_dotenv
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.language_manager import language_manager
-from config.config import Config
+"""
+塔罗AI解读器
+使用AI模型生成塔罗牌解读
 
+作者: Lima
+支持: OpenAI GPT、DeepSeek
+"""
+
+import openai
+import os
+import sys
+import json
+from typing import List, Dict
+from pathlib import Path
+from dotenv import load_dotenv
+
+# 确保能正确导入项目模块
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# 加载环境变量
 load_dotenv()
 
+try:
+    from src.language_manager import language_manager
+except ImportError:
+    # 如果language_manager不存在，创建一个简单的替代
+    class SimpleLanguageManager:
+        def get_user_language(self, user_id):
+            return 'zh'
+        def get_text(self, key, user_id, **kwargs):
+            return "获取文本失败"
+        def get_ai_prompt(self, key, user_id):
+            return "获取提示词失败"
+    language_manager = SimpleLanguageManager()
+
 class TarotAIInterpreter:
+    """
+    塔罗AI解读器
+    支持OpenAI和DeepSeek两种AI模型
+    """
     def __init__(self):
-        self.ai_model = Config.AI_MODEL
+        # 从环境变量获取AI模型配置
+        self.ai_model = os.getenv('AI_MODEL', 'gpt-3.5-turbo')
         
         # 根据配置的模型类型初始化相应的客户端
-        if self.ai_model.startswith('gpt'):
+        if self.ai_model.startswith('gpt') or self.ai_model.startswith('openai'):
+            # OpenAI模型
+            api_key = os.getenv('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError("使用OpenAI模型需要设置OPENAI_API_KEY环境变量")
+                
+            self.client = openai.OpenAI(api_key=api_key)
+            self.model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+            self.max_tokens = int(os.getenv('OPENAI_MAX_TOKENS', '1000'))
+            self.temperature = float(os.getenv('OPENAI_TEMPERATURE', '0.7'))
+            
+        elif self.ai_model == 'deepseek-chat' or self.ai_model.startswith('deepseek'):
+            # DeepSeek模型
+            api_key = os.getenv('DEEPSEEK_API_KEY')
+            if not api_key:
+                raise ValueError("使用DeepSeek模型需要设置DEEPSEEK_API_KEY环境变量")
+                
             self.client = openai.OpenAI(
-                api_key=Config.OPENAI_API_KEY
+                api_key=api_key,
+                base_url=os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
             )
-            self.model = Config.OPENAI_MODEL
-            self.max_tokens = Config.OPENAI_MAX_TOKENS
-            self.temperature = Config.OPENAI_TEMPERATURE
-        elif self.ai_model == 'deepseek-chat':
-            self.client = openai.OpenAI(
-                api_key=Config.DEEPSEEK_API_KEY,
-                base_url=Config.DEEPSEEK_BASE_URL
-            )
-            self.model = Config.DEEPSEEK_MODEL
-            self.max_tokens = Config.DEEPSEEK_MAX_TOKENS
-            self.temperature = Config.DEEPSEEK_TEMPERATURE
+            self.model = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+            self.max_tokens = int(os.getenv('DEEPSEEK_MAX_TOKENS', '1000'))
+            self.temperature = float(os.getenv('DEEPSEEK_TEMPERATURE', '0.7'))
+            
         else:
-            raise ValueError(f"不支持的AI模型: {self.ai_model}")
+            raise ValueError(f"不支持的AI模型: {self.ai_model}。支持的模型: gpt-3.5-turbo, gpt-4, deepseek-chat")
     
     def generate_reading(self, cards: List[Dict], question: str = None, spread_type: str = "general", user_id: int = None) -> str:
         """

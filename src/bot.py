@@ -1,50 +1,109 @@
+"""
+Глас Таро Telegram机器人
+塔罗占卜机器人的主要逻辑，处理用户交互
+
+作者: Lima
+这是我写的塔罗机器人，集成了AI解读功能
+"""
+
 import os
 import logging
 import re
+import sys
 from typing import Dict, List
+from pathlib import Path
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, 
     MessageHandler, filters, ContextTypes
 )
 from dotenv import load_dotenv
+
+# 确保能正确导入项目模块
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 from src.tarot_reader import TarotReader
 from src.ai_interpreter import TarotAIInterpreter
-from src.language_manager import language_manager
-from src.user_manager import user_manager
 from data.tarot_cards import MAJOR_ARCANA, MINOR_ARCANA
+
+# 尝试导入可选模块
+try:
+    from src.language_manager import language_manager
+except ImportError:
+    # 创建简单的语言管理器替代
+    class SimpleLanguageManager:
+        def get_text(self, key, user_id, **kwargs):
+            texts = {
+                'welcome': f"🔮 欢迎使用Глас Таро塔罗机器人！",
+                'menu_reading': "🎴 开始占卜",
+                'menu_daily': "📅 每日塔罗",
+                'menu_learn': "📚 学习塔罗",
+                'menu_language': "🌍 语言设置",
+                'menu_help': "❓ 帮助"
+            }
+            return texts.get(key, f"文本缺失: {key}")
+        
+        def get_user_language(self, user_id):
+            return 'zh'
+            
+        def get_spread_name(self, spread_type, user_id):
+            spreads = {
+                'single': '单张牌',
+                'three_card': '三张牌',
+                'love': '爱情牌阵',
+                'career': '事业牌阵'
+            }
+            return spreads.get(spread_type, spread_type)
+    
+    language_manager = SimpleLanguageManager()
+
+try:
+    from src.user_manager import user_manager
+except ImportError:
+    # 创建简单的用户管理器替代
+    class SimpleUserManager:
+        pass
+    user_manager = SimpleUserManager()
 
 # 加载环境变量
 load_dotenv()
 
-# 配置日志
+# 简单的日志配置
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
 class TarotBot:
+    """
+    塔罗机器人主类
+    处理所有的Telegram交互逻辑
+    """
     def __init__(self):
         self.tarot_reader = TarotReader()
-        self.user_sessions = {}  # 存储用户会话数据
+        self.user_sessions = {}  # 简单的内存会话存储，后面可以改成Redis
     
     def clean_markdown_text(self, text: str) -> str:
-        """清理文本中可能导致Markdown解析错误的字符"""
+        """
+        清理AI生成的文本，防止Telegram Markdown解析出错
+        这个方法是我踩坑后总结出来的
+        """
         if not text:
             return text
         
-        # 移除可能导致实体解析错误的特殊字符组合
-        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)  # 移除控制字符
+        # 去掉控制字符，这些会导致解析失败
+        text = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text)
         
-        # 转义所有可能导致问题的Markdown特殊字符
-        # 使用更保守的方法，转义所有特殊字符
+        # 转义Markdown特殊字符，防止格式错乱
         special_chars = ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
         for char in special_chars:
             text = text.replace(char, f'\\{char}')
         
-        # 移除可能导致解析问题的连续特殊字符
-        text = re.sub(r'\\{2,}', '\\', text)  # 移除多余的反斜杠
+        # 清理多余的反斜杠 (修复正则表达式转义问题)
+        text = re.sub(r'\\{2,}', r'\\', text)
         
         return text
     
@@ -539,24 +598,6 @@ class TarotBot:
         
         await self.safe_edit_message(update, text, reply_markup=reply_markup, parse_mode='Markdown')
     
-    async def show_main_menu(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """显示主菜单"""
-        user = update.effective_user
-        user_id = user.id
-        
-        welcome_text = language_manager.get_text('welcome', user_id, name=user.first_name)
-        
-        keyboard = [
-            [InlineKeyboardButton(language_manager.get_text('menu_reading', user_id), callback_data="start_reading")],
-            [InlineKeyboardButton(language_manager.get_text('menu_daily', user_id), callback_data="daily_card")],
-            [InlineKeyboardButton(language_manager.get_text('menu_learn', user_id), callback_data="learn_tarot")],
-            [InlineKeyboardButton(language_manager.get_text('menu_language', user_id), callback_data="language_select")],
-            [InlineKeyboardButton(language_manager.get_text('menu_help', user_id), callback_data="help")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await self.safe_edit_message(update, welcome_text, reply_markup=reply_markup)
-    
     async def show_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """显示帮助信息"""
         user_id = update.effective_user.id
@@ -570,32 +611,40 @@ class TarotBot:
         await self.safe_edit_message(update, help_text, reply_markup=reply_markup, parse_mode='Markdown')
 
 def main():
-    """启动机器人"""
-    # 获取Bot Token
+    """启动塔罗机器人的主函数"""
+    # 检查必需的Token
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
-        logger.error("请在.env文件中设置TELEGRAM_BOT_TOKEN")
+        logger.error("❌ 缺少TELEGRAM_BOT_TOKEN，请在.env文件中设置")
         return
+    
+    logger.info("🤖 正在初始化塔罗机器人...")
     
     # 创建机器人实例
     bot = TarotBot()
     
-    # 创建应用
+    # 构建Telegram应用
     application = Application.builder().token(token).build()
     
-    # 添加处理器
+    # 注册命令处理器
     application.add_handler(CommandHandler("start", bot.start))
     application.add_handler(CommandHandler("help", bot.help_command))
     application.add_handler(CommandHandler("daily", bot.daily_card_command))
     application.add_handler(CommandHandler("reading", bot.reading_command))
     application.add_handler(CommandHandler("learn", bot.learn_command))
     
+    # 注册回调和消息处理器
     application.add_handler(CallbackQueryHandler(bot.handle_callback_query))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_question))
     
     # 启动机器人
-    logger.info("塔罗预测机器人启动中...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("🚀 Глас Таро 机器人启动完成，开始接收消息...")
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    except KeyboardInterrupt:
+        logger.info("👋 机器人已停止")
+    except Exception as e:
+        logger.error(f"💥 机器人运行出错: {e}")
 
 if __name__ == '__main__':
     main()

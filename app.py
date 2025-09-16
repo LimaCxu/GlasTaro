@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-FastAPI应用主入口
+Глас Таро API服务器
+塔罗占卜机器人的后端服务，处理所有的API请求和数据管理
+
+作者: Lima
+创建时间: 2025年
 """
 
 import asyncio
@@ -27,70 +31,73 @@ from core.middleware import (
 )
 from core.config import settings
 
-# 配置日志
+# 设置日志 - 我喜欢简单直接的日志格式
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Redis管理器实例
+# 全局Redis管理器 - 简单粗暴但有效
 redis_manager = create_redis_manager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """应用生命周期管理"""
-    # 启动时执行
-    logger.info("正在启动应用...")
+    """
+    应用启动和关闭的生命周期管理
+    我习惯把所有初始化放在这里，方便调试
+    """
+    # 启动时的准备工作
+    logger.info("🚀 塔罗API服务启动中...")
     
     try:
-        # 初始化数据库
+        # 先搞定数据库
         await init_database()
-        logger.info("数据库初始化完成")
+        logger.info("✅ 数据库连接OK")
         
-        # 连接Redis
+        # 再连Redis
         await redis_manager.connect()
-        logger.info("Redis连接成功")
+        logger.info("✅ Redis连接OK")
         
-        # 设置Redis实例到应用状态
+        # 把Redis挂到app上，方便其他地方用
         app.state.redis = redis_manager
         
-        logger.info("应用启动完成")
+        logger.info("🎉 所有服务启动完成，准备接收请求")
         
     except Exception as e:
-        logger.error(f"应用启动失败: {e}")
+        logger.error(f"💥 启动失败: {e}")
         raise
     
-    yield
+    yield  # 这里是应用运行期间
     
-    # 关闭时执行
-    logger.info("正在关闭应用...")
+    # 关闭时的清理工作
+    logger.info("🛑 开始关闭服务...")
     
     try:
-        # 关闭Redis连接
+        # 清理顺序很重要，先关Redis再关数据库
         await redis_manager.disconnect()
-        logger.info("Redis连接已关闭")
+        logger.info("✅ Redis已断开")
         
-        # 关闭数据库连接
         await close_database()
-        logger.info("数据库连接已关闭")
+        logger.info("✅ 数据库已断开")
         
-        logger.info("应用关闭完成")
+        logger.info("👋 服务已完全关闭")
         
     except Exception as e:
-        logger.error(f"应用关闭时出错: {e}")
+        logger.error(f"关闭时出了点问题: {e}")  # 关闭时出错也不是什么大事
 
-# 创建FastAPI应用
+# 创建FastAPI应用实例
 app = FastAPI(
-    title="塔罗占卜机器人API",
-    description="基于FastAPI的塔罗占卜Telegram机器人后端服务",
+    title="Глас Таро API",  # 用俄语名字更有个性
+    description="我的塔罗占卜机器人后端服务，集成了AI解读功能",
     version="1.0.0",
+    # 开发时显示文档，生产环境关闭（安全考虑）
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
     lifespan=lifespan
 )
 
-# CORS中间件
+# 配置CORS - 开发时比较宽松，生产环境要严格
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_HOSTS,
@@ -99,24 +106,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 受信任主机中间件
+# 生产环境才加主机验证
 if not settings.DEBUG:
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=settings.ALLOWED_HOSTS
     )
 
-# 自定义中间件
-app.add_middleware(SecurityMiddleware)
-app.add_middleware(LoggingMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(MetricsMiddleware)
+# 添加我的自定义中间件 - 顺序很重要
+app.add_middleware(SecurityMiddleware)    # 安全第一
+app.add_middleware(LoggingMiddleware)     # 日志记录
+app.add_middleware(RateLimitMiddleware)   # 防刷
+app.add_middleware(MetricsMiddleware)     # 监控
 
-# 异常处理器
+# 异常处理器 - 我喜欢把错误处理得清楚明了
 @app.exception_handler(BaseAPIException)
-async def api_exception_handler(request: Request, exc: BaseAPIException):
-    """API异常处理器"""
-    logger.error(f"API异常: {exc.detail} - {request.url}")
+async def my_api_exception_handler(request: Request, exc: BaseAPIException):
+    """处理我自定义的API异常"""
+    logger.error(f"业务异常: {exc.detail} - {request.url}")
     return JSONResponse(
         status_code=exc.status_code,
         content=get_error_response(exc),
@@ -124,15 +131,15 @@ async def api_exception_handler(request: Request, exc: BaseAPIException):
     )
 
 @app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """请求验证异常处理器"""
-    logger.error(f"请求验证失败: {exc.errors()} - {request.url}")
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """处理请求参数验证错误"""
+    logger.error(f"参数验证失败: {exc.errors()} - {request.url}")
     return JSONResponse(
         status_code=422,
         content={
             "error": {
                 "code": "VALIDATION_ERROR",
-                "message": "请求数据验证失败",
+                "message": "请求参数有问题",
                 "details": exc.errors()
             },
             "success": False
@@ -140,9 +147,9 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 @app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException):
-    """HTTP异常处理器"""
-    logger.error(f"HTTP异常: {exc.detail} - {request.url}")
+async def http_error_handler(request: Request, exc: StarletteHTTPException):
+    """处理HTTP相关异常"""
+    logger.error(f"HTTP错误: {exc.detail} - {request.url}")
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -156,70 +163,81 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     )
 
 @app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """通用异常处理器"""
-    logger.error(f"未处理的异常: {str(exc)} - {request.url}", exc_info=True)
+async def catch_all_handler(request: Request, exc: Exception):
+    """兜底的异常处理器，捕获所有未处理的异常"""
+    logger.error(f"未知错误: {str(exc)} - {request.url}", exc_info=True)
     return JSONResponse(
         status_code=500,
         content={
             "error": {
-                "code": "INTERNAL_SERVER_ERROR",
-                "message": "服务器内部错误" if not settings.DEBUG else str(exc)
+                "code": "UNKNOWN_ERROR",
+                "message": "服务器出了点问题" if not settings.DEBUG else str(exc)
             },
             "success": False
         }
     )
 
-# 健康检查端点
+# 健康检查端点 - 简单实用
 @app.get("/health")
 async def health_check():
-    """健康检查"""
+    """检查服务是否正常运行"""
     try:
-        # 检查Redis连接
-        redis_status = "ok" if await redis_manager.ping() else "error"
+        # 简单检查Redis是否还活着
+        redis_ok = await redis_manager.ping()
         
         return {
-            "status": "ok",
+            "status": "healthy",
             "services": {
-                "redis": redis_status,
-                "database": "ok"  # 可以添加数据库连接检查
+                "redis": "ok" if redis_ok else "down",
+                "database": "ok"  # TODO: 以后可以加数据库检查
             },
-            "timestamp": int(asyncio.get_event_loop().time())
+            "timestamp": int(asyncio.get_event_loop().time()),
+            "message": "塔罗服务运行正常 🔮"
         }
     except Exception as e:
-        logger.error(f"健康检查失败: {e}")
-        raise HTTPException(status_code=503, detail="服务不可用")
+        logger.error(f"健康检查出错: {e}")
+        raise HTTPException(status_code=503, detail="服务暂时不可用")
 
-# 根路径
+# 首页
 @app.get("/")
-async def root():
-    """根路径"""
+async def welcome():
+    """API首页"""
     return {
-        "message": "塔罗占卜机器人API",
+        "name": "Глас Таро API",
+        "message": "塔罗占卜机器人后端服务",
         "version": "1.0.0",
-        "docs": "/docs" if settings.DEBUG else None
+        "author": "Lima",
+        "docs": "/docs" if settings.DEBUG else "文档在生产环境中不可用",
+        "health": "/health"
     }
 
-# 包含API路由
+# 挂载API路由
 app.include_router(api_router, prefix="/api/v1")
 
-# Prometheus指标端点
+# 监控指标（如果启用的话）
 if settings.ENABLE_METRICS:
     metrics_app = make_asgi_app()
     app.mount("/metrics", metrics_app)
+    logger.info("📊 Prometheus指标已启用")
 
-# 启动函数
-def start_server():
-    """启动服务器"""
-    uvicorn.run(
-        "app:app",
-        host=settings.HOST,
-        port=settings.PORT,
-        reload=settings.DEBUG,
-        workers=1 if settings.DEBUG else settings.WORKERS,
-        log_level="info" if settings.DEBUG else "warning",
-        access_log=settings.DEBUG
-    )
+def run_server():
+    """启动服务器的函数"""
+    config = {
+        "app": "app:app",
+        "host": settings.HOST,
+        "port": settings.PORT,
+        "reload": settings.DEBUG,
+        "log_level": "info" if settings.DEBUG else "warning",
+        "access_log": settings.DEBUG
+    }
+    
+    # 生产环境用多进程
+    if not settings.DEBUG:
+        config["workers"] = settings.WORKERS
+    
+    logger.info(f"🚀 启动服务器 {settings.HOST}:{settings.PORT}")
+    uvicorn.run(**config)
 
+# 直接运行时启动服务器
 if __name__ == "__main__":
-    start_server()
+    run_server()
